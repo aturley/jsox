@@ -50,13 +50,9 @@ OSCIntArg.prototype.getBytes = function() {
 OSCIntArg.prototype.getString = function() {
     var byteArray = new Uint8Array(4);
     byteArray[0] = (this.value & 0x7F000000) >> 24;
-    console.log(byteArray[3]);
     byteArray[1] = (this.value & 0xFF0000) >> 16;
-    console.log(byteArray[2]);
     byteArray[2] = (this.value & 0xFF00) >> 8;
-    console.log(byteArray[1]);
     byteArray[3] = this.value & 0xFF;
-    console.log(byteArray[0]);
     if (this.value < 0) {
         byteArray[0] = byteArray[0] | 0x80;
     }
@@ -208,3 +204,108 @@ OSCMessage.prototype.addFloat = function(v) {
 OSCMessage.prototype.addString = function(v) {
   this.args.push(new OSCStringArg(v));
 };
+
+var OSCReceiver = function(message) {
+    // message is an ArrayBuffer
+    this.uint8array = new Uint8Array(message);
+    this.address = '';
+    this.oscArgs = [];
+    this.JSON = '';
+    this.translateMessage();
+    this.toJSON();
+};
+
+OSCReceiver.prototype.parseInteger = function (index) {
+    var value = 0; // holds 32 bit integer
+    value |= (this.uint8array[index] << 24) & 0xFF000000;
+    value |= (this.uint8array[index + 1] << 16) & 0xFF0000;
+    value |= (this.uint8array[index + 2] << 8) & 0xFF00;
+    value |= this.uint8array[index + 3] & 0xFF;
+    return value;
+};
+
+OSCReceiver.prototype.parseFloat = function (index) {
+    var value = 0;
+    value |= (this.uint8array[index] << 24) & 0xFF000000;
+    value |= (this.uint8array[index + 1] << 16) & 0xFF0000;
+    value |= (this.uint8array[index + 2] << 8) & 0xFF00;
+    value |= this.uint8array[index + 3] & 0xFF;
+    return ieee754.hexToFloat(value);
+};
+
+OSCReceiver.prototype.parseString = function (index) {
+    var nullOffset = [4, 3, 2, 1];
+    var value = '';
+    var offset = 0;
+    var i = 0;
+    while (this.uint8array[index + i] != 0) {
+        value += String.fromCharCode(this.uint8array[index + i]);
+        i++;
+    }
+    offset = i + nullOffset[i%4];
+    return {'offset':offset, 'value':value};
+};
+
+OSCReceiver.prototype.parseArg = function (argType, argsIndex, dataIndex) {
+    var stringResultObject;
+    if (argType === 'i') {
+        this.oscArgs[argsIndex][1] = this.parseInteger(dataIndex);
+        return dataIndex + 4;
+    } else if (argType === 'f') {
+        this.oscArgs[argsIndex][1] = this.parseFloat(dataIndex);
+        return dataIndex + 4;
+    } else if (argType === 's') {
+        stringResultObject = this.parseString(dataIndex);
+        this.oscArgs[argsIndex][1] = stringResultObject['value'];
+        return dataIndex + stringResultObject['offset'];
+    } else {
+        throw new Error("argument " + argType + " not supported");
+    }
+};
+
+OSCReceiver.prototype.parseArgs = function (dataIndex) {
+    var i = 0;
+    for (i = 0; i < this.oscArgs.length; i++) {
+        dataIndex = this.parseArg(this.oscArgs[i][0], i, dataIndex);
+    }
+};
+
+OSCReceiver.prototype.translateMessage = function () {
+    var value = 0;
+    var i;
+    var addressParsed = false;
+    var argTypesParsed = false;
+    var argsParsed = false;
+    var argsString = '';
+    for (i = 0; i < this.uint8array.length; i++) {
+        value = parseInt(this.uint8array[i]);
+        if (value === 0) {
+            if ((addressParsed === false) && (this.address != '')){
+                addressParsed = true;
+            } else if ((argTypesParsed === false) && (argsString != '')){
+                for (var j = 0; j < argsString.length; j++) {
+                    this.oscArgs[j] = [argsString[j]];
+                }
+                argTypesParsed = true;
+            } else if (i%4 === 0) {
+                this.parseArgs(i);
+                break;
+            }
+        } else if (addressParsed === false) {
+            this.address += String.fromCharCode(value);
+        } else if (argTypesParsed === false) {
+            if (value != 44) { // skip the comma
+                argsString += String.fromCharCode(value);
+            }
+        } else if (argsParsed === false) {
+            this.parseArgs(i);
+            break;
+        }
+    }
+};
+
+OSCReceiver.prototype.toJSON = function () {
+    this.JSON = JSON.stringify({'address': this.address,
+                                'args': this.oscArgs});
+};
+
