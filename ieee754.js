@@ -39,5 +39,12 @@ var ieee754 = {
   },
  bytesToFloat: function (b) {
     return this.bytesToFloatDetails(b).bytes;
-  }
+  },
+ hexToFloat: function (hex) {
+   // via http://stackoverflow.com/questions/770342/how-can-i-convert-four-characters-into-a-32-bit-ieee-754-float-in-perl
+   var sign = (hex & 0x80000000) ? -1 : 1;
+   var exp = ((hex & 0x7f800000) >> 23) - 127;
+   var man = (hex & 0x007fffff | 0x00800000);
+   return sign * Math.pow(2, exp) * (man/(1<<23));
+ }
 };
